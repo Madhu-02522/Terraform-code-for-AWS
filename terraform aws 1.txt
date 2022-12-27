@@ -1,0 +1,179 @@
+provider "aws" {
+    region = "us-east-1"
+    access_key = "AKIAWPKJXALOMAN5WS6O"
+    secret_key = "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"
+}
+
+resource "aws_vpc" "my_vpc" {
+    cidr_block = "10.0.1.0/24"
+    tags = {
+        Name = "MY_VPC"
+    }
+}
+
+resource "aws_subnet" "my_app-subnet" {
+    tags = {
+        Name = "APP_Subnet"
+    }
+    vpc_id = aws_vpc.my_vpc.id
+    cidr_block = "10.0.1.0/24"
+    map_public_ip_on_launch = true
+    depends_on = [aws_vpc.my_vpc]
+}
+
+resource "aws_route_table" "my-route-table" {
+    tags = {
+        Name = "My_Route_table"
+    }
+     vpc_id = aws_vpc.my_vpc.id
+}
+
+resource "aws_route_table_association" "App_Route_Association" {
+    subnet_id      = aws_subnet.my_app-subnet.id
+    route_table_id = aws_route_table.my-route-table.id
+
+}
+
+resource "aws_internet_gateway" "my_IG" {
+    tags = {
+        Name = "MY_IGW"
+    }
+     vpc_id = aws_vpc.my_vpc.id
+     depends_on = [aws_vpc.my_vpc]
+}
+
+resource "aws_route" "default_route" {
+    route_table_id = aws_route_table.my-route-table.id
+    destination_cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.my_IG.id
+}
+
+resource "aws_security_group" "App_SG" {
+    name = "App_SG"
+    description = "Allow Web inbound traffic"
+    vpc_id = aws_vpc.my_vpc.id
+    ingress {
+        protocol = "tcp"
+        from_port = 80
+        to_port = 80
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    ingress {
+        protocol = "tcp"
+        from_port = 22
+        to_port = 22
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    egress {
+        protocol = "-1"
+        from_port = 0
+        to_port = 0
+        cidr_blocks = ["0.0.0.0/0"]
+
+    }
+}
+
+resource "tls_private_key" "Web-Key" {
+    algorithm = "RSA"
+}
+
+resource "aws_key_pair" "App-Instance-key" {
+    key_name = "Web-key"
+    public_key = tls_private_key.Web-Key.public_key_openssh
+}
+
+resource "local_file" "Web-key" {
+    content = tls_private_key.Web-Key.private_key_pem
+    file name = "Web-Key.pem"
+
+}
+
+resource "aws_instane" "Web" {
+    ami = "ami-064d05b4fe8515623"
+    instance_type = "t2.micro"
+    tags = {
+        Name = "WebServer1"
+    }
+    count = 1
+    subnet_id = aws_subnet.my_app-subnet.id
+    key_name = "Web-key"
+    security_groups = [aws_security_group.App_SG.id]
+
+    provisioner "remote-exec" {
+    connection {
+        type = "ssh"
+        user = "ec2-user"
+        private_key = tls_private_key.Web-key.private_key_pem
+        host = aws_instance.Web[0].public_ip
+    }
+    inline = [
+        "sudo yum install httpd php git -y",
+        "sudo systemctl restart https",
+        "sudo systemctl enable httpd",
+    
+    ]
+    }
+}
+
+resource "aws_ebs_volume"  "myebs1" {
+    availability_zone = aws_instacne.Web[0].availability_zone
+    size = 1
+    tags = {
+        Name = "ebsvol"
+    }
+}
+
+resource "aws_volume_attachment" "attach_ebs" {
+    depends_on = [aws_ebs_volume.myebs1]
+    device_name = "/dev/sdh"
+    volume_id = aws_ebs_volume.myebs1.id
+    instance_id = aws_instance.Web[0].id
+    force_detach - true
+}
+
+resource "null_resource" "nullmount" {
+    depends_on = [aws_volume_attachment.attach_ebs]
+    connection {
+        type    = "ssh"
+        user    = "ec2-user"
+        private_key = tls_private_key.Web-Key.private_key_pem
+        host    = aws_instance.Web[0].public_ip
+    }
+    provisioner "remote - exec" {
+        inline = [
+            "sudo mkfs.ext4 /dev/xvdh"
+            "sudo mount /dev/xvdh /var/www/html",
+            "sudo rm -rf /var/www/html/*",
+            "sudo git clone https://github.com"
+        ]
+    }
+    
+}
+
+locals {
+    s3_origin_id = "s3.origin"
+}
+
+
+resource "aws_s3_bucket" "Madhavibucket1234" {
+    bucket = "Madhavibucket1234"
+    ac1 = "public-read-write"
+    region = "us-east-1"
+
+    versioning
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
